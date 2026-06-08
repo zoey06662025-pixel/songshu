@@ -1,0 +1,673 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>一只松鼠的环球旅行</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #4a2d22;
+      --cream: #fff1bd;
+      --wood: #b56d3a;
+      --leaf: #6da85e;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html,
+    body {
+      margin: 0;
+      min-height: 100%;
+      overflow: hidden;
+      background: #2d6e82;
+      font-family: "Courier New", "PingFang SC", "Microsoft YaHei", monospace;
+      color: var(--ink);
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+    }
+
+    .shell {
+      width: min(100vw, 1180px);
+      height: min(100vh, 720px);
+      display: grid;
+      place-items: center;
+      padding: 14px;
+    }
+
+    .game-frame {
+      position: relative;
+      width: 100%;
+      max-width: 1120px;
+      aspect-ratio: 16 / 9;
+      background: #91d1d0;
+      border: 6px solid #5a3c2e;
+      box-shadow: 0 12px 0 #2e2019, 0 24px 34px rgba(38, 24, 16, 0.28);
+      image-rendering: pixelated;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      image-rendering: pixelated;
+      cursor: pointer;
+    }
+
+    .modal {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: rgba(45, 70, 63, 0.34);
+    }
+
+    .modal.show {
+      display: flex;
+    }
+
+    .panel {
+      width: min(560px, 92%);
+      padding: 26px 24px 24px;
+      text-align: center;
+      background: var(--cream);
+      border: 5px solid #5a3c2e;
+      box-shadow: 8px 8px 0 #8f5636;
+    }
+
+    .panel h1 {
+      margin: 0 0 18px;
+      font-size: clamp(25px, 4vw, 40px);
+      line-height: 1.35;
+      letter-spacing: 0;
+    }
+
+    .panel p {
+      margin: 0 0 18px;
+      font-size: clamp(14px, 2.2vw, 18px);
+      line-height: 1.7;
+    }
+
+    button {
+      min-width: 158px;
+      min-height: 48px;
+      border: 4px solid #4d2e22;
+      background: #f2a64c;
+      color: #3c251c;
+      box-shadow: 4px 4px 0 #7f4b2e;
+      font: 700 18px/1 "Courier New", "PingFang SC", "Microsoft YaHei", monospace;
+      cursor: pointer;
+    }
+
+    button:active {
+      transform: translate(4px, 4px);
+      box-shadow: none;
+    }
+
+    .hint {
+      position: absolute;
+      left: 18px;
+      bottom: 14px;
+      padding: 8px 10px;
+      color: #fff7cb;
+      background: rgba(68, 45, 31, 0.66);
+      border: 3px solid rgba(255, 242, 182, 0.8);
+      font-size: clamp(12px, 1.8vw, 15px);
+      pointer-events: none;
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        padding: 8px;
+      }
+
+      .game-frame {
+        border-width: 4px;
+      }
+
+      .hint {
+        left: 10px;
+        bottom: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="game-frame" aria-label="一只松鼠的环球旅行游戏">
+      <canvas id="game" width="960" height="540"></canvas>
+      <div class="hint">点击/空格跳跃</div>
+      <div class="modal show" id="modal">
+        <div class="panel">
+          <h1 id="modalTitle">一只松鼠的环球旅行</h1>
+          <p id="modalText">点击开始，让小松鼠出发。</p>
+          <button id="restartBtn" type="button">开始游戏</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const modal = document.getElementById("modal");
+      const modalTitle = document.getElementById("modalTitle");
+      const modalText = document.getElementById("modalText");
+      const restartBtn = document.getElementById("restartBtn");
+
+      const W = canvas.width;
+      const H = canvas.height;
+      const groundY = 438;
+      const playerScreenX = 148;
+      const gravity = 1900;
+      const runSpeed = 236;
+      const maxCharge = 1;
+      const maxJumpBoost = 430;
+      const releaseFallSpeed = 240;
+      const bgScrollMax = 84;
+      const bgScrollRatio = 0.055;
+      const scenes = [
+        { key: "forest", name: "森林", src: "assets/forest.png", from: 0 },
+        { key: "fuji", name: "富士山", src: "assets/fuji.png", from: 4 },
+        { key: "paris", name: "巴黎铁塔", src: "assets/paris.png", from: 8 },
+        { key: "egypt", name: "埃及金字塔", src: "assets/egypt.png", from: 12 },
+        { key: "sydney", name: "悉尼歌剧院", src: "assets/sydney.png", from: 16 }
+      ];
+      const obstacleKinds = ["pinecone", "shell", "mushroom", "stone"];
+
+      let audio;
+      let images = {};
+      let lowCanvas = document.createElement("canvas");
+      let lowCtx = lowCanvas.getContext("2d");
+      lowCanvas.height = 180;
+      lowCanvas.width = Math.round(lowCanvas.height * (W + bgScrollMax) / H);
+      lowCtx.imageSmoothingEnabled = false;
+
+      const state = {
+        mode: "ready",
+        worldX: 0,
+        playerY: groundY - 70,
+        velocityY: 0,
+        grounded: true,
+        inputDown: false,
+        charging: false,
+        chargeStart: 0,
+        chargeAmount: 0,
+        jumpBoost: 0,
+        runFrame: 0,
+        runFrameTimer: 0,
+        passed: 0,
+        sceneIndex: 0,
+        oldSceneIndex: 0,
+        sceneStartX: 0,
+        oldSceneOffset: 0,
+        transition: 1,
+        transitionTime: 0,
+        obstacles: [],
+        flagX: Number.POSITIVE_INFINITY,
+        lastTime: 0,
+        cameraShake: 0,
+        won: false
+      };
+
+      function resetGame() {
+        const gaps = [530, 410, 470, 440, 520, 430, 500, 410, 480, 455, 525, 420, 465, 505, 435, 510, 430, 470, 420, 455];
+        let x = 760;
+        state.obstacles = gaps.map((gap, index) => {
+          x += gap;
+          return {
+            index: index + 1,
+            x,
+            y: groundY,
+            w: 38,
+            h: 36,
+            kind: index === 19 ? "pinecone" : obstacleKinds[index % obstacleKinds.length],
+            passed: false
+          };
+        });
+        state.flagX = x + 520;
+        state.mode = "playing";
+        state.worldX = 0;
+        state.playerY = groundY - 70;
+        state.velocityY = 0;
+        state.grounded = true;
+        state.inputDown = false;
+        state.charging = false;
+        state.chargeStart = 0;
+        state.chargeAmount = 0;
+        state.jumpBoost = 0;
+        state.runFrame = 0;
+        state.runFrameTimer = 0;
+        state.passed = 0;
+        state.sceneIndex = 0;
+        state.oldSceneIndex = 0;
+        state.sceneStartX = 0;
+        state.oldSceneOffset = 0;
+        state.transition = 1;
+        state.transitionTime = 0;
+        state.cameraShake = 0;
+        state.won = false;
+        modal.classList.remove("show");
+      }
+
+      function initAudio() {
+        if (audio) return;
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const ac = new AudioContext();
+        const master = ac.createGain();
+        master.gain.value = 0.15;
+        master.connect(ac.destination);
+        audio = { ac, master, musicTimer: null };
+        startMusic();
+      }
+
+      function playTone(freq, duration, type, gain, delay = 0) {
+        if (!audio) return;
+        const { ac, master } = audio;
+        const osc = ac.createOscillator();
+        const env = ac.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, ac.currentTime + delay);
+        env.gain.setValueAtTime(0, ac.currentTime + delay);
+        env.gain.linearRampToValueAtTime(gain, ac.currentTime + delay + 0.012);
+        env.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + delay + duration);
+        osc.connect(env);
+        env.connect(master);
+        osc.start(ac.currentTime + delay);
+        osc.stop(ac.currentTime + delay + duration + 0.04);
+      }
+
+      function startMusic() {
+        const notes = [392, 440, 523, 587, 523, 440, 392, 330, 392, 494, 587, 659, 587, 494, 440, 392];
+        let step = 0;
+        audio.musicTimer = window.setInterval(() => {
+          if (state.mode === "playing" || state.mode === "ready") {
+            const n = notes[step % notes.length];
+            playTone(n, 0.24, "triangle", 0.045);
+            playTone(n / 2, 0.32, "sine", 0.032);
+          }
+          step += 1;
+        }, 320);
+      }
+
+      function jump() {
+        if (!state.grounded || state.mode !== "playing") return;
+        state.velocityY = -840;
+        state.jumpBoost = maxJumpBoost;
+        state.grounded = false;
+        state.charging = true;
+        state.chargeStart = performance.now();
+        state.chargeAmount = 0;
+        playTone(680, 0.09, "square", 0.07);
+        playTone(980, 0.11, "triangle", 0.035, 0.04);
+      }
+
+      function beginCharge() {
+        if (state.inputDown) return;
+        state.inputDown = true;
+        initAudio();
+        if (state.mode !== "playing") {
+          resetGame();
+          return;
+        }
+        jump();
+      }
+
+      function endCharge() {
+        state.inputDown = false;
+        if (!state.charging) return;
+        state.chargeAmount = Math.min((performance.now() - state.chargeStart) / 1000, maxCharge);
+        stopJumpControl();
+      }
+
+      function stopJumpControl() {
+        state.charging = false;
+        state.jumpBoost = 0;
+        if (!state.grounded && state.velocityY < releaseFallSpeed) {
+          state.velocityY = releaseFallSpeed;
+        }
+      }
+
+      function updateScene() {
+        let next = 0;
+        for (let i = 0; i < scenes.length; i += 1) {
+          if (state.passed >= scenes[i].from) next = i;
+        }
+        if (next !== state.sceneIndex) {
+          state.oldSceneIndex = state.sceneIndex;
+          state.oldSceneOffset = sceneOffset();
+          state.sceneIndex = next;
+          state.sceneStartX = state.worldX;
+          state.transition = 0;
+          state.transitionTime = 0;
+        }
+      }
+
+      function sceneOffset() {
+        return Math.min(Math.max((state.worldX - state.sceneStartX) * bgScrollRatio, 0), bgScrollMax);
+      }
+
+      function update(dt, now) {
+        if (state.mode !== "playing") return;
+        state.worldX += (runSpeed + (state.grounded ? 0 : state.jumpBoost)) * dt;
+        state.runFrameTimer += dt * 1000;
+        if (state.runFrameTimer > 95) {
+          state.runFrame = (state.runFrame + 1) % 4;
+          state.runFrameTimer = 0;
+        }
+        if (state.charging) {
+          state.chargeAmount = Math.min((now - state.chargeStart) / 1000, maxCharge);
+          if (state.chargeAmount >= maxCharge) {
+            stopJumpControl();
+          }
+        }
+        state.velocityY += gravity * dt;
+        state.playerY += state.velocityY * dt;
+        if (state.playerY >= groundY - 70) {
+          state.playerY = groundY - 70;
+          state.velocityY = 0;
+          state.grounded = true;
+          state.charging = false;
+          state.jumpBoost = 0;
+        }
+        state.obstacles.forEach((ob) => {
+          const sx = ob.x - state.worldX + playerScreenX;
+          if (!ob.passed && sx + ob.w < playerScreenX + 12) {
+            ob.passed = true;
+            state.passed += 1;
+            playTone(880, 0.08, "triangle", 0.055);
+            playTone(1175, 0.09, "sine", 0.04, 0.04);
+            updateScene();
+          }
+          if (!ob.passed && hitObstacle(ob, sx)) {
+            fail();
+          }
+        });
+        if (state.transition < 1) {
+          state.transitionTime += dt;
+          state.transition = Math.min(state.transitionTime / 1.35, 1);
+        }
+        const flagScreenX = state.flagX - state.worldX + playerScreenX;
+        if (state.passed >= 20 && flagScreenX < playerScreenX + 68) {
+          win();
+        }
+        state.cameraShake = Math.max(0, state.cameraShake - dt * 28);
+      }
+
+      function hitObstacle(ob, sx) {
+        const player = { x: playerScreenX + 16, y: state.playerY + 12, w: 42, h: 54 };
+        const box = obstacleBox(ob, sx);
+        return player.x < box.x + box.w && player.x + player.w > box.x && player.y < box.y + box.h && player.y + player.h > box.y;
+      }
+
+      function obstacleBox(ob, sx) {
+        if (ob.kind === "shell") return { x: sx + 4, y: groundY - 28, w: 34, h: 24 };
+        if (ob.kind === "mushroom") return { x: sx + 5, y: groundY - 42, w: 34, h: 38 };
+        if (ob.kind === "stone") return { x: sx + 4, y: groundY - 30, w: 36, h: 26 };
+        return { x: sx + 7, y: groundY - 42, w: 28, h: 38 };
+      }
+
+      function fail() {
+        state.mode = "failed";
+        state.cameraShake = 14;
+        playTone(180, 0.22, "sawtooth", 0.08);
+        playTone(120, 0.3, "square", 0.045, 0.08);
+        modalTitle.textContent = "旅行暂停";
+        modalText.textContent = "小松鼠碰到了路上的小障碍。";
+        restartBtn.textContent = "重新开始";
+        modal.classList.add("show");
+      }
+
+      function win() {
+        if (state.won) return;
+        state.won = true;
+        state.mode = "won";
+        playTone(523, 0.16, "triangle", 0.07);
+        playTone(659, 0.16, "triangle", 0.07, 0.15);
+        playTone(784, 0.2, "triangle", 0.075, 0.3);
+        playTone(1047, 0.42, "sine", 0.07, 0.48);
+        modalTitle.textContent = "欢迎民民再次来到悉尼！！！";
+        modalText.textContent = "";
+        restartBtn.textContent = "重新开始";
+        window.setTimeout(() => modal.classList.add("show"), 420);
+      }
+
+      function draw() {
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        if (state.cameraShake > 0) {
+          ctx.translate((Math.random() - 0.5) * state.cameraShake, (Math.random() - 0.5) * state.cameraShake);
+        }
+        drawBackground();
+        drawWorld();
+        ctx.restore();
+      }
+
+      function drawBackground() {
+        if (state.transition < 1) {
+          drawScene(state.oldSceneIndex, 1 - state.transition, state.oldSceneOffset);
+          drawScene(state.sceneIndex, state.transition, sceneOffset());
+        } else {
+          drawScene(state.sceneIndex, 1, sceneOffset());
+        }
+      }
+
+      function drawScene(sceneIndex, alpha, offset) {
+        const img = images[scenes[sceneIndex].key];
+        ctx.globalAlpha = alpha;
+        if (img && img.complete) {
+          const virtualW = W + bgScrollMax;
+          const crop = coverCrop(img, virtualW, H);
+          lowCtx.clearRect(0, 0, lowCanvas.width, lowCanvas.height);
+          lowCtx.drawImage(img, crop.x, crop.y, crop.w, crop.h, 0, 0, lowCanvas.width, lowCanvas.height);
+          ctx.drawImage(lowCanvas, -Math.round(offset), 0, virtualW, H);
+        } else {
+          ctx.fillStyle = "#9fd5bc";
+          ctx.fillRect(0, 0, W, H);
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      function coverCrop(img, targetW, targetH) {
+        const imageRatio = img.width / img.height;
+        const targetRatio = targetW / targetH;
+        if (imageRatio > targetRatio) {
+          const h = img.height;
+          const w = h * targetRatio;
+          return { x: (img.width - w) / 2, y: 0, w, h };
+        }
+        const w = img.width;
+        const h = w / targetRatio;
+        return { x: 0, y: (img.height - h) / 2, w, h };
+      }
+
+      function drawWorld() {
+        drawGround();
+        state.obstacles.forEach((ob) => {
+          const sx = Math.round(ob.x - state.worldX + playerScreenX);
+          if (sx > -80 && sx < W + 80) drawObstacle(ob, sx);
+        });
+        if (Number.isFinite(state.flagX)) {
+          drawFlag(Math.round(state.flagX - state.worldX + playerScreenX), groundY);
+        }
+        drawSquirrel(playerScreenX, Math.round(state.playerY), state.grounded ? state.runFrame : 4);
+      }
+
+      function drawGround() {
+        ctx.fillStyle = "#8fc060";
+        ctx.fillRect(0, groundY, W, H - groundY);
+        ctx.fillStyle = "#6aa650";
+        ctx.fillRect(0, groundY, W, 10);
+        ctx.fillStyle = "#bd7a48";
+        ctx.fillRect(0, groundY + 10, W, H - groundY - 10);
+        ctx.fillStyle = "#8d5635";
+        for (let x = -48 - (state.worldX % 48); x < W; x += 48) {
+          ctx.fillRect(x, groundY + 28, 18, 6);
+          ctx.fillRect(x + 25, groundY + 72, 22, 6);
+        }
+        ctx.fillStyle = "#d19159";
+        for (let x = -32 - (state.worldX % 32); x < W; x += 32) {
+          ctx.fillRect(x, groundY + 11, 10, 4);
+        }
+      }
+
+      function drawSquirrel(x, y, frame) {
+        const p = (px, py, w, h, color) => {
+          ctx.fillStyle = color;
+          ctx.fillRect(x + px, y + py, w, h);
+        };
+        const legA = frame % 2 === 0 ? 4 : -2;
+        const legB = frame % 2 === 0 ? -2 : 4;
+        const arm = frame === 1 || frame === 3 ? 3 : -1;
+        p(5, 22, 17, 16, "#7b4a2d");
+        p(0, 12, 18, 14, "#9b6238");
+        p(-5, 2, 18, 16, "#b97441");
+        p(-8, -5, 12, 10, "#d09252");
+        p(-2, -10, 8, 8, "#b97441");
+        p(3, -7, 6, 6, "#74452d");
+        p(13, 25, 34, 36, "#c9793d");
+        p(22, 32, 18, 24, "#e4ad65");
+        p(39, 13, 25, 24, "#c9793d");
+        p(52, 18, 14, 13, "#e4ad65");
+        p(58, 18, 4, 4, "#2e2119");
+        p(62, 27, 7, 4, "#6a3827");
+        p(44, 7, 10, 10, "#c9793d");
+        p(47, 2, 8, 8, "#8d5030");
+        p(36, 42 + arm, 10, 8, "#8d5030");
+        if (frame === 4) {
+          p(17, 58, 12, 8, "#8d5030");
+          p(35, 58, 13, 8, "#8d5030");
+        } else {
+          p(17, 58 + legA, 12, 8, "#8d5030");
+          p(35, 58 + legB, 13, 8, "#8d5030");
+        }
+        p(57, 31, 8, 5, "#f0c078");
+      }
+
+      function drawObstacle(ob, x) {
+        if (ob.kind === "pinecone") drawPinecone(x, groundY - 42);
+        if (ob.kind === "shell") drawShell(x, groundY - 31);
+        if (ob.kind === "mushroom") drawMushroom(x, groundY - 44);
+        if (ob.kind === "stone") drawStone(x, groundY - 31);
+      }
+
+      function drawPinecone(x, y) {
+        rect(x + 12, y + 2, 17, 8, "#7a4428");
+        rect(x + 8, y + 10, 25, 8, "#9b5a32");
+        rect(x + 5, y + 18, 31, 9, "#7d472b");
+        rect(x + 9, y + 27, 24, 9, "#a86438");
+        rect(x + 13, y + 34, 16, 6, "#6a3a24");
+        rect(x + 14, y + 11, 6, 5, "#d19159");
+        rect(x + 23, y + 20, 7, 5, "#d19159");
+      }
+
+      function drawShell(x, y) {
+        rect(x + 5, y + 14, 33, 14, "#f7d29a");
+        rect(x + 9, y + 7, 25, 10, "#e8a97f");
+        rect(x + 13, y + 3, 17, 8, "#ffe0af");
+        rect(x + 9, y + 18, 4, 8, "#bf796a");
+        rect(x + 18, y + 14, 4, 12, "#bf796a");
+        rect(x + 28, y + 17, 4, 9, "#bf796a");
+        rect(x + 4, y + 27, 36, 4, "#8a5b50");
+      }
+
+      function drawMushroom(x, y) {
+        rect(x + 15, y + 18, 14, 26, "#f0d6a0");
+        rect(x + 8, y + 10, 30, 18, "#d95745");
+        rect(x + 13, y + 4, 21, 11, "#e87355");
+        rect(x + 4, y + 18, 39, 8, "#b9443d");
+        rect(x + 15, y + 12, 5, 5, "#fff2c5");
+        rect(x + 28, y + 14, 5, 5, "#fff2c5");
+        rect(x + 18, y + 31, 10, 4, "#c49d6b");
+      }
+
+      function drawStone(x, y) {
+        rect(x + 5, y + 13, 34, 16, "#8a8f86");
+        rect(x + 10, y + 6, 25, 13, "#a8aaa0");
+        rect(x + 18, y + 2, 15, 8, "#c4c1b3");
+        rect(x + 9, y + 22, 29, 9, "#676d68");
+        rect(x + 18, y + 10, 8, 5, "#dad3bd");
+      }
+
+      function drawFlag(x, y) {
+        if (x < -80 || x > W + 220) return;
+        rect(x, y - 126, 8, 126, "#5a3c2e");
+        rect(x - 5, y - 6, 18, 8, "#6c4a32");
+        rect(x + 8, y - 122, 82, 48, "#1b4a9b");
+        rect(x + 8, y - 122, 38, 23, "#263a7e");
+        rect(x + 8, y - 113, 38, 5, "#fff0dc");
+        rect(x + 24, y - 122, 5, 23, "#fff0dc");
+        rect(x + 8, y - 111, 38, 3, "#d43d37");
+        rect(x + 25, y - 122, 3, 23, "#d43d37");
+        star(x + 61, y - 110, "#fff0dc");
+        star(x + 75, y - 91, "#fff0dc");
+        star(x + 55, y - 82, "#fff0dc");
+        star(x + 35, y - 83, "#fff0dc");
+      }
+
+      function star(x, y, color) {
+        rect(x + 3, y, 3, 9, color);
+        rect(x, y + 3, 9, 3, color);
+      }
+
+      function rect(x, y, w, h, color) {
+        ctx.fillStyle = color;
+        ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
+      }
+
+      function loop(now) {
+        const dt = Math.min((now - (state.lastTime || now)) / 1000, 0.033);
+        state.lastTime = now;
+        update(dt, now);
+        draw();
+        requestAnimationFrame(loop);
+      }
+
+      function loadImages() {
+        return Promise.all(scenes.map((scene) => new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            images[scene.key] = img;
+            resolve();
+          };
+          img.onerror = resolve;
+          img.src = scene.src;
+        })));
+      }
+
+      restartBtn.addEventListener("click", () => {
+        initAudio();
+        resetGame();
+      });
+      canvas.addEventListener("pointerdown", beginCharge);
+      canvas.addEventListener("pointerup", endCharge);
+      canvas.addEventListener("pointercancel", endCharge);
+      window.addEventListener("keydown", (event) => {
+        if (event.code === "Space") {
+          event.preventDefault();
+          beginCharge();
+        }
+      });
+      window.addEventListener("keyup", (event) => {
+        if (event.code === "Space") {
+          event.preventDefault();
+          endCharge();
+        }
+      });
+
+      loadImages().then(() => requestAnimationFrame(loop));
+    })();
+  </script>
+</body>
+</html>
